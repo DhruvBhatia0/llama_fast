@@ -229,11 +229,17 @@ int main() {
     apply_rotary_emb_forward_cpu(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out, xk_out, B, T, C);
 
     for (int i = 0; i < B * T * C; i++) {
-        printf("xq_out at index %d = %f\n", i+1, xq_out[i]);
-        printf("xk_out at index %d = %f\n", i+1, xk_out[i]);
+        printf("andrei kernel: xq_out at index %d = %f\n", i+1, xq_out[i]);
+        printf("andrei kernel: xk_out at index %d = %f\n", i+1, xk_out[i]);
     }
 
     apply_rotary_emb(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out, xk_out, B, T, C);
+
+    for (int i = 0; i < B * T * C; i++) {
+        printf("ken kernel: xq_out at index %d = %f\n", i+1, xq_out[i]);
+        printf("ken kernel: xk_out at index %d = %f\n", i+1, xk_out[i]);
+    }
+
 
     free(xq_inp);
     free(xk_inp);
