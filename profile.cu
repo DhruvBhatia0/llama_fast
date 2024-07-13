@@ -241,6 +241,6 @@ int main() {
     free(freqs_sin);
     free(xq_out);
     free(xk_out);
-    printf("%s\n", "finished running...")
+    printf("%s\n", "finished running...");
     return 0;
 }
