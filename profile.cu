@@ -9,6 +9,9 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
 
+#include <cuda_runtime.h>
+#include <stdio.h>
+
 __global__ void apply_rotary_emb_kernel(
     float *xq_r, float *xq_i,
     float *xk_r, float *xk_i,
@@ -21,8 +24,8 @@ __global__ void apply_rotary_emb_kernel(
     int total_size = batch_size * seq_len * dim;
 
     if (idx < total_size) {
-        float cos_val = freqs_cos[idx];
-        float sin_val = freqs_sin[idx];
+        float cos_val = freqs_cos[idx % dim];
+        float sin_val = freqs_sin[idx % dim];
 
         // Apply rotation using real numbers for xq
         xq_out_r[idx] = xq_r[idx] * cos_val - xq_i[idx] * sin_val;
@@ -50,41 +53,46 @@ void reshape_complex(float* inp, int B, int T, int C, float* out_real, float* ou
 }
 
 extern "C" void apply_rotary_emb(
-    float *xq_inp, float *xk_inp,
-    float *freqs_cos, float *freqs_sin,
-    float *xq_out, float *xk_out,
-    int batch_size, int seq_len, int dim) {
-
-    int dim_real = dim / 2;
-    int total_size = batch_size * seq_len * dim_real;
-
-    float *xq_r, *xq_i, *xk_r, *xk_i;
-    cudaMalloc(&xq_r, total_size * sizeof(float));
-    cudaMalloc(&xq_i, total_size * sizeof(float));
-    cudaMalloc(&xk_r, total_size * sizeof(float));
-    cudaMalloc(&xk_i, total_size * sizeof(float));
+    float* xq_inp,
+    float* xk_inp,
+    float* freqs_cos,
+    float* freqs_sin,
+    float* xq_out,
+    float* xk_out,
+    int B,
+    int T,
+    int C
+) {
+    int dim_real = C / 2;
+    int total_size = B * T * dim_real;
 
     // Allocate host memory for reshaped parts
-    float *xq_r_h = (float*)malloc(total_size * sizeof(float));
-    float *xq_i_h = (float*)malloc(total_size * sizeof(float));
-    float *xk_r_h = (float*)malloc(total_size * sizeof(float));
-    float *xk_i_h = (float*)malloc(total_size * sizeof(float));
+    float* xq_real = (float*)malloc(total_size * sizeof(float));
+    float* xq_imag = (float*)malloc(total_size * sizeof(float));
+    float* xk_real = (float*)malloc(total_size * sizeof(float));
+    float* xk_imag = (float*)malloc(total_size * sizeof(float));
 
     // Reshape xq and xk to real and imaginary parts on host
-    reshape_complex(xq_inp, batch_size, seq_len, dim, xq_r_h, xq_i_h);
-    reshape_complex(xk_inp, batch_size, seq_len, dim, xk_r_h, xk_i_h);
+    reshape_complex(xq_inp, B, T, C, xq_real, xq_imag);
+    reshape_complex(xk_inp, B, T, C, xk_real, xk_imag);
+
+    float *d_xq_r, *d_xq_i, *d_xk_r, *d_xk_i;
+    cudaMalloc(&d_xq_r, total_size * sizeof(float));
+    cudaMalloc(&d_xq_i, total_size * sizeof(float));
+    cudaMalloc(&d_xk_r, total_size * sizeof(float));
+    cudaMalloc(&d_xk_i, total_size * sizeof(float));
 
     // Copy reshaped data to device
-    cudaMemcpy(xq_r, xq_r_h, total_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(xq_i, xq_i_h, total_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(xk_r, xk_r_h, total_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(xk_i, xk_i_h, total_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_xq_r, xq_real, total_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_xq_i, xq_imag, total_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_xk_r, xk_real, total_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_xk_i, xk_imag, total_size * sizeof(float), cudaMemcpyHostToDevice);
 
     float *d_freqs_cos, *d_freqs_sin;
-    cudaMalloc(&d_freqs_cos, total_size * sizeof(float));
-    cudaMalloc(&d_freqs_sin, total_size * sizeof(float));
-    cudaMemcpy(d_freqs_cos, freqs_cos, total_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_freqs_sin, freqs_sin, total_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_freqs_cos, dim_real * sizeof(float));
+    cudaMalloc(&d_freqs_sin, dim_real * sizeof(float));
+    cudaMemcpy(d_freqs_cos, freqs_cos, dim_real * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_freqs_sin, freqs_sin, dim_real * sizeof(float), cudaMemcpyHostToDevice);
 
     float *d_xq_out_r, *d_xq_out_i, *d_xk_out_r, *d_xk_out_i;
     cudaMalloc(&d_xq_out_r, total_size * sizeof(float));
@@ -96,11 +104,11 @@ extern "C" void apply_rotary_emb(
     int numBlocks = (total_size + blockSize - 1) / blockSize;
 
     apply_rotary_emb_kernel<<<numBlocks, blockSize>>>(
-        xq_r, xq_i, xk_r, xk_i,
+        d_xq_r, d_xq_i, d_xk_r, d_xk_i,
         d_freqs_cos, d_freqs_sin,
         d_xq_out_r, d_xq_out_i,
         d_xk_out_r, d_xk_out_i,
-        batch_size, seq_len, dim_real);
+        B, T, dim_real);
 
     // Combine real and imaginary parts and flatten
     float *xq_out_r_h = (float*)malloc(total_size * sizeof(float));
@@ -115,13 +123,13 @@ extern "C" void apply_rotary_emb(
 
     // Combine the real and imaginary parts into the output
     #pragma unroll
-    for (int b = 0; b < batch_size; b++) {
+    for (int b = 0; b < B; b++) {
         #pragma unroll
-        for (int t = 0; t < seq_len; t++) {
+        for (int t = 0; t < T; t++) {
             #pragma unroll
             for (int c = 0; c < dim_real; c++) {
-                int idx_out = b * seq_len * dim + t * dim + 2 * c;
-                int idx_in = b * seq_len * dim_real + t * dim_real + c;
+                int idx_out = b * T * C + t * C + 2 * c;
+                int idx_in = b * T * dim_real + t * dim_real + c;
                 xq_out[idx_out] = xq_out_r_h[idx_in];
                 xq_out[idx_out + 1] = xq_out_i_h[idx_in];
                 xk_out[idx_out] = xk_out_r_h[idx_in];
@@ -131,20 +139,20 @@ extern "C" void apply_rotary_emb(
     }
 
     // Free host memory
-    free(xq_r_h);
-    free(xq_i_h);
-    free(xk_r_h);
-    free(xk_i_h);
+    free(xq_real);
+    free(xq_imag);
+    free(xk_real);
+    free(xk_imag);
     free(xq_out_r_h);
     free(xq_out_i_h);
     free(xk_out_r_h);
     free(xk_out_i_h);
 
     // Free device memory
-    cudaFree(xq_r);
-    cudaFree(xq_i);
-    cudaFree(xk_r);
-    cudaFree(xk_i);
+    cudaFree(d_xq_r);
+    cudaFree(d_xq_i);
+    cudaFree(d_xk_r);
+    cudaFree(d_xk_i);
     cudaFree(d_freqs_cos);
     cudaFree(d_freqs_sin);
     cudaFree(d_xq_out_r);
@@ -205,8 +213,8 @@ void apply_rotary_emb_forward_cpu(
 
 int main() {
     int B = 2;
-    int T = 3;
-    int C = 4;
+    int T = 2;
+    int C = 2;
 
     printf("%s\n", "hello...");
 
@@ -231,6 +239,22 @@ int main() {
     for (int i = 0; i < B * T * C; i++) {
         printf("andrei kernel: xq_out at index %d = %f\n", i+1, xq_out[i]);
         printf("andrei kernel: xk_out at index %d = %f\n", i+1, xk_out[i]);
+    }
+
+    xq_inp = (float*)malloc(B * T * C * sizeof(float));
+    xk_inp = (float*)malloc(B * T * C * sizeof(float));
+    freqs_cos = (float*)malloc((C/2) * sizeof(float));
+    freqs_sin = (float*)malloc((C/2) * sizeof(float));
+    xq_out = (float*)malloc(B * T * C * sizeof(float));
+    xk_out = (float*)malloc(B * T * C * sizeof(float));
+
+    for (int i = 0; i < B * T * C; i++) {
+        xq_inp[i] = i + 1;
+        xk_inp[i] = i + 1;
+    }
+    for (int i = 0; i < C/2; i++) {
+        freqs_cos[i] = cos(i);
+        freqs_sin[i] = sin(i);
     }
 
     apply_rotary_emb(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out, xk_out, B, T, C);
