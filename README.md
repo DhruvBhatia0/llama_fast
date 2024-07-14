@@ -8,6 +8,8 @@
 git submodule update --init --recursive
 ```
 
-## run base profiler
+## run base profiler -> run from inside llama3 folder
 
 python3 -m torch.distributed.run --nproc_per_node=1 ../profile_base.py
+
+
