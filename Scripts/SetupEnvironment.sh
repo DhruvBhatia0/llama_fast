@@ -1,7 +1,14 @@
 #!/bin/bash
 
+python3 -m venv ./venv
+source ./venv/bin/activate
+
+pip install torch
+
+find / -name "TorchConfig.cmake" 2>/dev/null
+
 sudo apt-get update
-sudo apt-get install libssl-dev ccache libboost-all-dev
+sudo apt-get install libssl-dev ccache libboost-all-dev python3.10-venv
 
 # Define the hardcoded directory
 TARGET_DIR="/path/to/your/directory"
