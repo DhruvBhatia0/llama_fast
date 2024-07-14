@@ -45,7 +45,6 @@ def main():
                  record_shapes=True,
                  profile_memory=True,
                  with_stack=True) as prof:
-        with record_function("llama3_inference"):
             response = generator.chat_completion(
                 [dialog],
                 max_gen_len=256,
