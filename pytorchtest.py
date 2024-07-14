@@ -47,24 +47,20 @@ class RMSNorm(torch.nn.Module):
 # profiling stuff
 if __name__ == "__main__":
     input_tensor = torch.randn(8, 1024, 768, device='cuda')
-    custom_rmsnorm = RMSNormCustom(768).cuda()
-    pytorch_rmsnorm = RMSNorm(768).cuda()
+    custom_rmsnorm = RMSNormCustom(input_tensor.shape[-1]).cuda()
+    pytorch_rmsnorm = RMSNorm(input_tensor.shape[-1]).cuda()
 
-    # Warm-up to avoid measuring initial setup overhead
-    for _ in range(10):
-        custom_output = custom_rmsnorm(input_tensor)
-        pytorch_output = pytorch_rmsnorm(input_tensor)
-
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof_custom:
+    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_custom:
         custom_output = custom_rmsnorm(input_tensor)
         print(custom_output)
 
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof_pytorch:
+    with profile(activities=[ProfilerActivity.CUDA], record_shapes=True) as prof_pytorch:
         pytorch_output = pytorch_rmsnorm(input_tensor)
         print(pytorch_output)
 
     print("Custom RMSNorm Profiling:")
-    print(prof_custom.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    print(prof_custom.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=10, header="Custom RMSNorm CUDA Profiling"))
 
     print("\nPyTorch LayerNorm Profiling:")
-    print(prof_pytorch.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    print(prof_pytorch.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=10, header="PyTorch LayerNorm CUDA Profiling"))
+

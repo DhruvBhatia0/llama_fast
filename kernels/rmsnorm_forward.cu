@@ -68,7 +68,7 @@ torch::Tensor rmsnorm_forward(
 ) {
     auto output = torch::empty_like(input);
 
-    const int block_size = 1024;
+    const int block_size = 128;
     const int grid_size = B * T;
 
     rmsnorm_forward_kernel<<<grid_size, block_size>>>(
