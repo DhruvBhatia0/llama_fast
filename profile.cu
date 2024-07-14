@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <chrono>
 
 #include <cuda_runtime.h>
 #include <stdio.h>
@@ -100,7 +101,7 @@ extern "C" void apply_rotary_emb(
     cudaMalloc(&d_xk_out_r, total_size * sizeof(float));
     cudaMalloc(&d_xk_out_i, total_size * sizeof(float));
 
-    int blockSize = 256;
+    int blockSize = 512;
     int numBlocks = (total_size + blockSize - 1) / blockSize;
 
     apply_rotary_emb_kernel<<<numBlocks, blockSize>>>(
@@ -212,65 +213,67 @@ void apply_rotary_emb_forward_cpu(
 }
 
 int main() {
-    int B = 2;
-    int T = 2;
-    int C = 2;
+    int B = 64; // Batch size
+    int T = 128; // Sequence length
+    int C = 256; // Embedding dimension
+    int iterations = 100; // Number of iterations for averaging
 
-    printf("%s\n", "hello...");
-
+    // Allocate memory for inputs and outputs
     float* xq_inp = (float*)malloc(B * T * C * sizeof(float));
     float* xk_inp = (float*)malloc(B * T * C * sizeof(float));
-    float* freqs_cos = (float*)malloc((C/2) * sizeof(float));
-    float* freqs_sin = (float*)malloc((C/2) * sizeof(float));
-    float* xq_out = (float*)malloc(B * T * C * sizeof(float));
-    float* xk_out = (float*)malloc(B * T * C * sizeof(float));
+    float* freqs_cos = (float*)malloc(C/2 * sizeof(float));
+    float* freqs_sin = (float*)malloc(C/2 * sizeof(float));
+    float* xq_out_original = (float*)malloc(B * T * C * sizeof(float));
+    float* xk_out_original = (float*)malloc(B * T * C * sizeof(float));
+    float* xq_out_cuda = (float*)malloc(B * T * C * sizeof(float));
+    float* xk_out_cuda = (float*)malloc(B * T * C * sizeof(float));
 
+    // Initialize inputs with some values
     for (int i = 0; i < B * T * C; i++) {
-        xq_inp[i] = i + 1;
-        xk_inp[i] = i + 1;
+        xq_inp[i] = rand() % 10;
+        xk_inp[i] = rand() % 10;
     }
     for (int i = 0; i < C/2; i++) {
-        freqs_cos[i] = cos(i);
-        freqs_sin[i] = sin(i);
+        freqs_cos[i] = rand() % 10;
+        freqs_sin[i] = rand() % 10;
     }
 
-    apply_rotary_emb_forward_cpu(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out, xk_out, B, T, C);
+    // Warm-up runs for both versions
+    apply_rotary_emb_forward_cpu(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out_original, xk_out_original, B, T, C);
+    apply_rotary_emb(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out_cuda, xk_out_cuda, B, T, C);
 
-    for (int i = 0; i < B * T * C; i++) {
-        printf("andrei kernel: xq_out at index %d = %f\n", i+1, xq_out[i]);
-        printf("andrei kernel: xk_out at index %d = %f\n", i+1, xk_out[i]);
+    // Measure CPU version
+    auto start_cpu = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iterations; i++) {
+        apply_rotary_emb_forward_cpu(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out_original, xk_out_original, B, T, C);
     }
+    auto end_cpu = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration_cpu = end_cpu - start_cpu;
+    double avg_cpu_time = duration_cpu.count() / iterations;
 
-    xq_inp = (float*)malloc(B * T * C * sizeof(float));
-    xk_inp = (float*)malloc(B * T * C * sizeof(float));
-    freqs_cos = (float*)malloc((C/2) * sizeof(float));
-    freqs_sin = (float*)malloc((C/2) * sizeof(float));
-    xq_out = (float*)malloc(B * T * C * sizeof(float));
-    xk_out = (float*)malloc(B * T * C * sizeof(float));
-
-    for (int i = 0; i < B * T * C; i++) {
-        xq_inp[i] = i + 1;
-        xk_inp[i] = i + 1;
+    // Measure CUDA version
+    auto start_cuda = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iterations; i++) {
+        apply_rotary_emb(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out_cuda, xk_out_cuda, B, T, C);
+        cudaDeviceSynchronize(); // Ensure kernel execution is finished
     }
-    for (int i = 0; i < C/2; i++) {
-        freqs_cos[i] = cos(i);
-        freqs_sin[i] = sin(i);
-    }
+    auto end_cuda = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration_cuda = end_cuda - start_cuda;
+    double avg_cuda_time = duration_cuda.count() / iterations;
 
-    apply_rotary_emb(xq_inp, xk_inp, freqs_cos, freqs_sin, xq_out, xk_out, B, T, C);
+    // Print results
+    printf("Average CPU time: %f seconds\n", avg_cpu_time);
+    printf("Average CUDA time: %f seconds\n", avg_cuda_time);
 
-    for (int i = 0; i < B * T * C; i++) {
-        printf("ken kernel: xq_out at index %d = %f\n", i+1, xq_out[i]);
-        printf("ken kernel: xk_out at index %d = %f\n", i+1, xk_out[i]);
-    }
-
-
+    // Free allocated memory
     free(xq_inp);
     free(xk_inp);
     free(freqs_cos);
     free(freqs_sin);
-    free(xq_out);
-    free(xk_out);
-    printf("%s\n", "finished running...");
+    free(xq_out_original);
+    free(xk_out_original);
+    free(xq_out_cuda);
+    free(xk_out_cuda);
+
     return 0;
 }
