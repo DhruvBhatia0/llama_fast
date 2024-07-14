@@ -8,10 +8,8 @@
 // RMSNorm coop-group kernel
 __global__ void rmsnorm_forward_kernel(
     float* __restrict__ out,
-    float* __restrict__ rms,
     const float* __restrict__ inp,
     const float* __restrict__ weight,
-    const float* __restrict__ bias,
     int B,
     int T,
     int C
@@ -50,16 +48,13 @@ __global__ void rmsnorm_forward_kernel(
 
     // compute rms
     float rms_val = rsqrtf(block_sum_of_squares / C + eps);
-    if (threadIdx.x == 0 && rms != nullptr) {
-        __stcs(rms + idx, rms_val);
-    }
 
     float *o = out + idx * C;
 
     #pragma unroll
     for (int i = threadIdx.x; i < C; i += blockDim.x) {
         float n =  __ldcs(x+i) * rms_val;
-        __stcs(o+i, n * weight[i] + bias[i]);
+        __stcs(o+i, n * weight[i]);
     }
 }
 
@@ -67,23 +62,19 @@ __global__ void rmsnorm_forward_kernel(
 torch::Tensor rmsnorm_forward(
     torch::Tensor input,
     torch::Tensor weight,
-    torch::Tensor bias,
     int B,
     int T,
     int C
 ) {
     auto output = torch::empty_like(input);
-    auto rms = torch::empty({B, T}, input.options());
 
     const int block_size = 1024;
     const int grid_size = B * T;
 
     rmsnorm_forward_kernel<<<grid_size, block_size>>>(
         output.data_ptr<float>(),
-        rms.data_ptr<float>(),
         input.data_ptr<float>(),
         weight.data_ptr<float>(),
-        bias.data_ptr<float>(),
         B,
         T,
         C

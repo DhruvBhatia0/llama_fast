@@ -9,7 +9,7 @@ cuda_sources_list = [open(file).read() for file in cuda_source_files]
 cuda_sources = '\n'.join(cuda_sources_list)
 
 cpp_source = '''
-torch::Tensor rmsnorm_forward(torch::Tensor input, torch::Tensor weight, torch::Tensor bias, int B, int T, int C);
+torch::Tensor rmsnorm_forward(torch::Tensor input, torch::Tensor weight, int B, int T, int C);
 '''
 
 # Compile and load the CUDA extension
@@ -26,14 +26,10 @@ class RMSNormCustom(nn.Module):
     def __init__(self, dim: int):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(dim))
-        self.bias = nn.Parameter(torch.zeros(dim))
 
     def forward(self, inp):
         B, T, C = inp.size()
-        # out = torch.empty_like(inp)
-        # rms = torch.empty(B, T, device=inp.device, dtype=inp.dtype)
-
-        return rmsnorm_extension.rmsnorm_forward(inp, self.weight, self.bias, B, T, C) 
+        return rmsnorm_extension.rmsnorm_forward(inp, self.weight, B, T, C) 
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -61,9 +57,11 @@ if __name__ == "__main__":
 
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof_custom:
         custom_output = custom_rmsnorm(input_tensor)
+        print(custom_output)
 
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof_pytorch:
         pytorch_output = pytorch_rmsnorm(input_tensor)
+        print(pytorch_output)
 
     print("Custom RMSNorm Profiling:")
     print(prof_custom.key_averages().table(sort_by="cuda_time_total", row_limit=10))
