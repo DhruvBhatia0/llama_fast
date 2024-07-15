@@ -1,3 +1,6 @@
 [submodule "llama3"]
 	path = llama3
 	url = https://github.com/meta-llama/llama3.git
+[submodule "dependencies/cutlass"]
+	path = dependencies/cutlass
+	url = https://github.com/NVIDIA/cutlass.git
